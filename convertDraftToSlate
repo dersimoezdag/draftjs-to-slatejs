@@ -1,0 +1,141 @@
+const mapBlockType = draftType => {
+  switch (draftType) {
+    case 'unstyled':
+      return 'paragraph';
+    case 'header-one':
+      return 'heading-one';
+    case 'header-two':
+      return 'heading-two';
+    case 'header-three':
+      return 'heading-three';
+    case 'header-four':
+      return 'heading-four';
+    case 'header-five':
+      return 'heading-five';
+    case 'header-six':
+      return 'heading-six';
+    case 'blockquote':
+      return 'block-quote';
+    case 'unordered-list-item':
+      return 'list-item-bulleted';
+    case 'ordered-list-item':
+      return 'list-item-numbered';
+    default:
+      return 'paragraph';
+  }
+};
+
+const convertDraftToSlate = draftState => {
+  if (!draftState || !draftState.blocks) return [{ type: 'paragraph', children: [{ text: '' }] }]; // Handle empty state
+
+  const slateNodes = [];
+
+  draftState.blocks.forEach(block => {
+    const type = mapBlockType(block.type);
+    const children = [];
+
+    let text = block.text;
+    if (!text) {
+      text = ''; // Ensure text is never undefined
+    }
+
+    let lastIndex = 0;
+
+    if (block.inlineStyleRanges && block.inlineStyleRanges.length > 0) {
+      // Sort inline styles by offset
+      block.inlineStyleRanges.sort((a, b) => a.offset - b.offset);
+
+      block.inlineStyleRanges.forEach(style => {
+        if (style.offset > lastIndex) {
+          children.push({ text: text.substring(lastIndex, style.offset) });
+        }
+
+        const styleText = text.substring(style.offset, style.offset + style.length);
+        const marks = {};
+
+        style.style.split(',').forEach(s => {
+          marks[s.toLowerCase()] = true;
+        });
+
+        children.push({ text: styleText, ...marks });
+        lastIndex = style.offset + style.length;
+      });
+    }
+
+    if (lastIndex < text.length) {
+      children.push({ text: text.substring(lastIndex) });
+    }
+
+    if (children.length === 0) {
+      children.push({ text }); // handle case where there are no styles
+    }
+
+    // Entity Handling:
+    if (block.entityRanges && block.entityRanges.length > 0) {
+      // Sort entity ranges to avoid issues
+      block.entityRanges.sort((a, b) => a.offset - b.offset);
+
+      let newChildren = [];
+      let currentIndex = 0;
+
+      block.entityRanges.forEach(range => {
+        const entityKey = range.key;
+        const entity = draftState.entityMap[entityKey];
+
+        if (entity) {
+          const entityType = entity.type;
+          const entityData = entity.data;
+          const entityText = block.text.substring(range.offset, range.offset + range.length); // Text of the entity
+
+          let entityNode = null;
+
+          console.log('entityType', entityType);
+
+          switch (entityType) {
+            case 'LINK':
+              entityNode = {
+                type: 'link', // Your Slate link node type
+                url: entityData.url,
+                children: [{ text: entityText }]
+              };
+              break;
+            case 'IMAGE':
+              entityNode = {
+                type: 'image', // Your Slate image node type
+                src: entityData.src,
+                alt: entityData.alt || '', // Alt text is optional
+                children: [{ text: '' }] 
+              };
+              break;          
+            default:
+              entityNode = {
+                type: 'paragraph',
+                children: [{ text: entityText }]
+              };
+          }
+
+          if (entityNode) {
+            if (range.offset > currentIndex) {
+              newChildren.push({ text: block.text.substring(currentIndex, range.offset) });
+            }
+            newChildren.push(entityNode);
+            currentIndex = range.offset + range.length;
+          }
+        }
+      });
+
+      if (currentIndex < block.text.length) {
+        newChildren.push({ text: block.text.substring(currentIndex) });
+      }
+
+      children.length = 0;
+      children.push(...newChildren);
+    }
+
+    slateNodes.push({ type, children });
+  });
+
+  return slateNodes;
+};
+
+export default convertDraftToSlate;
